@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sentinel — Anomaly Detection Dashboard</title>
+<style>
+  :root {
+    --bg: #08081a;
+    --panel-bg: rgba(10, 10, 30, 0.55);
+    --border: rgba(255,255,255,0.18);
+    --border-soft: rgba(255,255,255,0.10);
+    --text: #f2f3f8;
+    --text-dim: #a7acc4;
+    --text-faint: #6b7094;
+    --crit: #9d6bff;
+    --crit-dim: rgba(157,107,255,0.15);
+    --elevated: #ffb84d;
+    --elevated-dim: rgba(255,184,77,0.15);
+    --safe: #34e0a1;
+    --safe-dim: rgba(52,224,161,0.15);
+    --accent: #5b7cff;
+    --accent-dim: rgba(91,124,255,0.18);
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    display: flex;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .glow-bg {
+    position: absolute;
+    top: -80px; left: 50%; transform: translateX(-50%);
+    width: 640px; max-width: 70vw; height: 420px;
+    background-image: url('../assets/back.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: top center;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.9;
+  }
+
+  .sidebar {
+    width: 68px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    padding: 26px 0;
+    z-index: 5;
+  }
+  .nav-icon-btn {
+    width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 10px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background 0.15s, border 0.15s;
+  }
+  .nav-icon-btn img { width: 20px; height: 20px; filter: brightness(0) invert(1); opacity: 0.65; }
+  .nav-icon-btn:hover { background: rgba(255,255,255,0.06); }
+  .nav-icon-btn.active { background: var(--accent-dim); border-color: rgba(91,124,255,0.4); }
+  .nav-icon-btn.active img { opacity: 1; }
+
+  .main {
+    flex: 1;
+    padding: 32px 5% 60px;
+    position: relative;
+    z-index: 2;
+    max-width: none;
+    width: 100%;
+  }
+  .page-title { font-size: 26px; font-weight: 700; margin-bottom: 26px; }
+
+  .section { display: none; }
+  .section.active { display: block; }
+
+  .card-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 20px; }
+  .card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    backdrop-filter: blur(6px);
+    cursor: default;
+  }
+  .card.clickable { cursor: pointer; transition: border-color 0.15s, transform 0.1s; }
+  .card.clickable:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .card-label { font-size: 12.5px; color: var(--text-dim); margin-bottom: 10px; text-align: center; }
+  .card-value { font-family: var(--mono); font-size: 24px; font-weight: 700; text-align: center; }
+  .card-value.crit { color: var(--crit); }
+  .card-value.safe { color: var(--safe); }
+  .card-sub { font-size: 11px; color: var(--text-faint); text-align: center; margin-top: 6px; }
+
+  .panel-row { display: grid; grid-template-columns: 1.3fr 1fr; gap: 18px; align-items: start; }
+  .panel {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px;
+    backdrop-filter: blur(6px);
+  }
+  .panel-title { font-size: 13px; font-weight: 700; margin-bottom: 16px; color: var(--text); }
+  .panel-title .tag { font-size: 10.5px; color: var(--text-faint); font-weight: 400; font-family: var(--mono); margin-left: 8px; }
+
+  .bar-chart { display: flex; align-items: flex-end; gap: 10px; height: 180px; padding: 0 6px; }
+  .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 8px; height: 100%; justify-content: flex-end; }
+  .bar { width: 100%; border-radius: 5px 5px 0 0; background: var(--accent); min-height: 3px; transition: transform 0.15s, filter 0.15s; cursor: pointer; }
+  .bar.spike { background: var(--crit); }
+  .bar-col:hover .bar { transform: scaleY(1.03); filter: brightness(1.25); }
+  .bar-col { cursor: pointer; }
+  .bar-count { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+  .bar-day { font-size: 10px; color: var(--text-faint); }
+  .day-filter-chip {
+    display: none; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11.5px;
+    background: var(--accent-dim); color: var(--accent); padding: 7px 12px; border-radius: 7px;
+    border: 1px solid rgba(91,124,255,0.35); margin-bottom: 12px;
+  }
+  .day-filter-chip.active { display: inline-flex; }
+  .day-filter-chip .clear-x { cursor: pointer; opacity: 0.7; }
+  .day-filter-chip .clear-x:hover { opacity: 1; }
+
+  .factor-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .factor-label { flex: 1; font-size: 12px; color: var(--text-dim); }
+  .factor-track { width: 90px; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+  .factor-fill { height: 100%; background: var(--accent); }
+  .factor-count { font-family: var(--mono); font-size: 11px; color: var(--text-faint); width: 26px; text-align: right; }
+
+  .entity-search-box { display: none; margin-top: 16px; }
+  .entity-search-box.open { display: block; }
+  .search-input {
+    width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+    color: var(--text); padding: 10px 14px; border-radius: 8px; font-family: var(--mono); font-size: 12.5px;
+  }
+
+  .queue-panel {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px;
+    backdrop-filter: blur(6px);
+  }
+  .queue-controls { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .queue-controls input, .queue-controls select {
+    background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 12px; border-radius: 7px; font-size: 12.5px; font-family: var(--sans);
+  }
+
+  .incident {
+    border: 1px solid var(--border-soft);
+    border-radius: 9px;
+    margin-bottom: 8px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.02);
+  }
+  .incident-head {
+    display: grid;
+    grid-template-columns: 6px 90px 1fr 130px 100px 90px;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    cursor: pointer;
+  }
+  .incident-head:hover { background: rgba(255,255,255,0.03); }
+  .sev-bar { width: 5px; height: 30px; border-radius: 3px; }
+  .sev-bar.crit { background: var(--crit); }
+  .sev-bar.elevated { background: var(--elevated); }
+  .entity-id { font-family: var(--mono); font-weight: 700; font-size: 13px; }
+  .entity-meta { font-size: 10.5px; color: var(--text-faint); }
+  .attack-type { font-weight: 600; }
+  .burst-tag { font-size: 10px; color: var(--text-faint); font-family: var(--mono); }
+  .risk-pill {
+    font-family: var(--mono); font-size: 12px; font-weight: 700; text-align: center;
+    background: var(--crit-dim); color: var(--crit); padding: 5px 0; border-radius: 6px;
+  }
+  .cold-pill {
+    font-size: 9.5px; font-family: var(--mono); color: var(--elevated);
+    background: var(--elevated-dim); padding: 4px 6px; border-radius: 5px; text-align: center;
+  }
+  .expand-arrow { font-size: 11px; color: var(--text-faint); text-align: right; }
+
+  .incident-body { display: none; padding: 0 16px 18px 30px; }
+  .incident-body.open { display: block; }
+  .body-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .reason-block-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-faint); margin: 10px 0 8px; }
+  .reason-chip {
+    font-family: var(--mono); font-size: 11.5px; color: var(--text);
+    background: rgba(255,255,255,0.04); border-left: 3px solid var(--crit);
+    padding: 7px 10px; border-radius: 4px; margin-bottom: 6px;
+  }
+  .reason-chip.classify { border-left-color: var(--accent); }
+  .action-row { display: flex; gap: 8px; margin-top: 14px; }
+  .action-btn {
+    font-family: var(--mono); font-size: 11px; padding: 8px 14px;
+    border-radius: 7px; border: 1px solid var(--border); background: rgba(255,255,255,0.03);
+    color: var(--text-dim); cursor: pointer;
+  }
+  .action-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .incident-meta-line { font-size: 11px; color: var(--text-faint); margin-top: 10px; font-family: var(--mono); }
+
+  @media (max-width: 820px) {
+    .main { padding: 20px 16px 50px; }
+    .page-title { font-size: 20px; margin-bottom: 16px; }
+    .card-row { grid-template-columns: 1fr; }
+    .panel-row { grid-template-columns: 1fr; }
+    .incident-head {
+      grid-template-columns: 5px 1fr 70px;
+      grid-template-areas: "sev entity risk" "sev type cold";
+      row-gap: 6px;
+    }
+    .incident-head .sev-bar { grid-area: sev; }
+    .incident-head .entity-id-wrap { grid-area: entity; }
+    .incident-head .attack-type-wrap { grid-area: type; }
+    .incident-head .risk-pill { grid-area: risk; }
+    .incident-head .cold-pill { grid-area: cold; }
+    .incident-head .expand-arrow { display: none; }
+    .body-cols { grid-template-columns: 1fr; }
+    .glow-bg { height: 260px; opacity: 0.7; }
+  }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="nav-icon-btn active" data-page="dashboard" title="Dashboard">
+    <img src="../assets/dash.png" alt="Dashboard">
+  </div>
+  <div class="nav-icon-btn" data-page="queue" title="Alert Queue">
+    <img src="../assets/notification.png" alt="Alert Queue">
+  </div>
+</div>
+
+<div class="main">
+<div class="glow-bg"></div>
+
+  <div class="section active" id="page-dashboard">
+    <div class="page-title">Dashboard</div>
+
+    <div class="card-row">
+      <div class="card">
+        <div class="card-label">Total events</div>
+        <div class="card-value" id="stat-total-events">\u2014</div>
+        <div class="card-sub" id="stat-total-sub"></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Alert budget used</div>
+        <div class="card-value crit" id="stat-budget">\u2014</div>
+        <div class="card-sub" id="stat-budget-sub"></div>
+      </div>
+      <div class="card clickable" id="entity-history-card">
+        <div class="card-label">Entity history view</div>
+        <div class="card-value safe" id="stat-entities">\u2014</div>
+        <div class="card-sub">click to look up an entity</div>
+        <div class="entity-search-box" id="entity-search-box">
+          <input class="search-input" id="entity-search-input" placeholder="Type entity ID, e.g. usr_00102, then press Enter">
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-row">
+      <div class="panel">
+        <div class="panel-title">Incidents over time (by day) <span class="tag">grouped, chained-window</span></div>
+        <div class="bar-chart" id="bar-chart"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Contributing factors <span class="tag">aggregated across all incidents</span></div>
+        <div id="contributing-factors"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section" id="page-queue">
+    <div class="page-title">Ranked alert queue</div>
+    <div class="queue-panel">
+      <div class="day-filter-chip" id="day-filter-chip">
+        <span id="day-filter-text"></span><span class="clear-x" id="day-filter-clear">✕</span>
+      </div>
+      <div class="queue-controls">
+        <input id="queue-search" placeholder="Search entity ID...">
+        <select id="queue-type-filter"><option value="">All attack types</option></select>
+        <select id="queue-sort">
+          <option value="risk-desc">Sort: severity (risk) \u2193</option>
+          <option value="events-desc">Sort: burst size \u2193</option>
+        </select>
+      </div>
+      <div id="incident-list"></div>
+    </div>
+  </div>
+
+</div>
+
+<script src="grouped_data.js"></script>
+<script>
+if (typeof GROUPED_DATA === "undefined") {
+  document.body.innerHTML = "<div style='padding:40px;color:#ff5470;font-family:monospace'>" +
+    "grouped_data.js not found. It must sit in the same folder as this HTML file.</div>";
+  throw new Error("missing data");
+}
+
+const incidents = GROUPED_DATA.incidents;
+const summary = GROUPED_DATA.summary;
+const groupingMeta = GROUPED_DATA.grouping_meta;
+
+document.querySelectorAll(".nav-icon-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".nav-icon-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+    document.getElementById("page-" + btn.dataset.page).classList.add("active");
+  });
+});
+
+document.getElementById("stat-total-events").textContent = summary.total_events.toLocaleString();
+document.getElementById("stat-total-sub").textContent =
+  `${((summary.total_events - summary.label_distribution.normal) / summary.total_events * 100).toFixed(2)}% true anomalies`;
+
+document.getElementById("stat-budget").textContent = `${summary.alerts_flagged}/${summary.alert_budget}`;
+document.getElementById("stat-budget-sub").textContent =
+  `${groupingMeta.grouped_incident_count} incidents after grouping (\u2212${groupingMeta.reduction_pct}%)`;
+
+const uniqueEntities = new Set(incidents.map(i => i.entity_id)).size;
+document.getElementById("stat-entities").textContent = uniqueEntities;
+
+document.getElementById("entity-history-card").addEventListener("click", (e) => {
+  if (e.target.id === "entity-search-input") return;
+  document.getElementById("entity-search-box").classList.toggle("open");
+});
+document.getElementById("entity-search-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    const q = e.target.value.trim();
+    document.querySelectorAll(".nav-icon-btn").forEach(b => b.classList.remove("active"));
+    document.querySelector('[data-page="queue"]').classList.add("active");
+    document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+    document.getElementById("page-queue").classList.add("active");
+    document.getElementById("queue-search").value = q;
+    renderQueue();
+  }
+});
+
+const dayCounts = {};
+incidents.forEach(inc => {
+  const day = inc.first_seen.slice(0, 10);
+  dayCounts[day] = (dayCounts[day] || 0) + 1;
+});
+const days = Object.keys(dayCounts).sort();
+const maxCount = Math.max(...Object.values(dayCounts));
+const avgCount = Object.values(dayCounts).reduce((a,b)=>a+b,0) / days.length;
+
+document.getElementById("bar-chart").innerHTML = days.map(d => {
+  const count = dayCounts[d];
+  const isSpike = count > avgCount * 1.5;
+  const heightPct = (count / maxCount * 100).toFixed(0);
+  const shortDay = d.slice(5);
+  return `
+    <div class="bar-col" data-day="${d}" title="${d}: ${count} incidents — click to view in queue">
+      <div class="bar-count">${count}</div>
+      <div class="bar ${isSpike ? 'spike' : ''}" style="height:${heightPct}%"></div>
+      <div class="bar-day">${shortDay}</div>
+    </div>`;
+}).join("");
+
+document.querySelectorAll(".bar-col").forEach(col => {
+  col.addEventListener("click", () => {
+    dayFilter = col.dataset.day;
+    document.querySelectorAll(".nav-icon-btn").forEach(b => b.classList.remove("active"));
+    document.querySelector('[data-page="queue"]').classList.add("active");
+    document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+    document.getElementById("page-queue").classList.add("active");
+    updateDayFilterChip();
+    renderQueue();
+  });
+});
+
+const factorCounts = {};
+incidents.forEach(inc => {
+  (inc.detection_reasons || []).forEach(r => {
+    const base = r.replace(/\s*\(\d+ event\(s\) earlier\)/, "");
+    factorCounts[base] = (factorCounts[base] || 0) + 1;
+  });
+});
+const topFactors = Object.entries(factorCounts).sort((a,b) => b[1]-a[1]).slice(0, 8);
+const maxFactor = topFactors.length ? topFactors[0][1] : 1;
+document.getElementById("contributing-factors").innerHTML = topFactors.map(([label, count]) => `
+  <div class="factor-row">
+    <div class="factor-label">${label}</div>
+    <div class="factor-track"><div class="factor-fill" style="width:${(count/maxFactor*100).toFixed(0)}%"></div></div>
+    <div class="factor-count">${count}</div>
+  </div>
+`).join("");
+
+const typeFilterSel = document.getElementById("queue-type-filter");
+[...new Set(incidents.map(i => i.predicted_attack_type))].sort().forEach(t => {
+  const opt = document.createElement("option");
+  opt.value = t; opt.textContent = t;
+  typeFilterSel.appendChild(opt);
+});
+
+let expandedId = null;
+
+function renderQueue() {
+  const q = document.getElementById("queue-search").value.toLowerCase();
+  const typeFilter = typeFilterSel.value;
+  const sortMode = document.getElementById("queue-sort").value;
+
+  let list = incidents.filter(inc => {
+    if (q && !inc.entity_id.toLowerCase().includes(q)) return false;
+    if (typeFilter && inc.predicted_attack_type !== typeFilter) return false;
+    return true;
+  });
+  list.sort((a,b) => sortMode === "risk-desc"
+    ? b.risk_score - a.risk_score
+    : b.event_count - a.event_count);
+
+  const wrap = document.getElementById("incident-list");
+  if (list.length === 0) {
+    wrap.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-faint)">No incidents match the current filters.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = list.map(inc => {
+    const sevClass = inc.risk_score >= 0.9999 ? "crit" : "elevated";
+    const isOpen = inc.incident_id === expandedId;
+    const detectionChips = (inc.detection_reasons || []).map(r => `<div class="reason-chip">[ ${r} ]</div>`).join("")
+      || `<div class="reason-chip">[ diffuse signal ]</div>`;
+    const classChips = (inc.classification_reasons || []).map(r => `<div class="reason-chip classify">[ ${r} ]</div>`).join("")
+      || `<div class="reason-chip classify">[ diffuse signal ]</div>`;
+
+    return `
+      <div class="incident">
+        <div class="incident-head" data-id="${inc.incident_id}">
+          <div class="sev-bar ${sevClass}"></div>
+          <div class="entity-id-wrap"><div class="entity-id">${inc.entity_id}</div><div class="entity-meta">${inc.entity_type}</div></div>
+          <div class="attack-type-wrap">
+            <div class="attack-type">${inc.predicted_attack_type}</div>
+            <div class="burst-tag">${inc.event_count > 1 ? inc.event_count + ' events merged' : 'single event'}</div>
+          </div>
+          <div class="risk-pill">${inc.risk_score.toFixed(3)}</div>
+          <div>${inc.cold_start ? '<span class="cold-pill">COLD-START</span>' : ''}</div>
+          <div class="expand-arrow">${isOpen ? '\u25b2' : '\u25bc'}</div>
+        </div>
+        <div class="incident-body ${isOpen ? 'open' : ''}">
+          <div class="body-cols">
+            <div>
+              <div class="reason-block-title">Why flagged (detection)</div>
+              ${detectionChips}
+            </div>
+            <div>
+              <div class="reason-block-title">Why this attack type (${(inc.classification_confidence*100).toFixed(0)}% confidence)</div>
+              ${classChips}
+            </div>
+          </div>
+          <div class="incident-meta-line">
+            first seen: ${inc.first_seen} \u00b7 last seen: ${inc.last_seen} \u00b7 true label: ${(inc.all_true_labels||[]).join(", ")}
+          </div>
+          <div class="action-row">
+            <div class="action-btn">Mark reviewed</div>
+            <div class="action-btn">Escalate</div>
+            <div class="action-btn">Dismiss</div>
+          </div>
+        </div>
+      </div>`;
+  }).join("");
+
+  wrap.querySelectorAll(".incident-head").forEach(el => {
+    el.addEventListener("click", () => {
+      expandedId = (expandedId === el.dataset.id) ? null : el.dataset.id;
+      renderQueue();
+    });
+  });
+}
+
+document.getElementById("queue-search").addEventListener("input", renderQueue);
+typeFilterSel.addEventListener("change", renderQueue);
+document.getElementById("queue-sort").addEventListener("change", renderQueue);
+
+renderQueue();
+</script>
+</body>
+</html>
